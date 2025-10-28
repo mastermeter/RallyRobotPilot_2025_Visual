@@ -1,0 +1,6 @@
+.venv/
+rallyrobopilot.egg-info/
+*.png
+*.npz
+*.ipynb
+__pycache__/
