@@ -31,8 +31,7 @@ def outputs_to_commands(preds, threshold=0.5):
     p = preds.detach().cpu().numpy()  # [4]
 
     active = []
-    if p[0] > threshold:
-        active.append("forward")
+    active.append("forward")    # Always include forward
     if p[1] > threshold:
         active.append("back")
     if p[2] > threshold:
