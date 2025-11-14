@@ -3,7 +3,6 @@ import timeit
 import setuptools
 from ursina import *
 from ursina import curve
-from .particles import Particles, TrailRenderer
 from math import pow, atan2
 import json
 
@@ -59,23 +58,6 @@ class Car(Entity):
 
         # Car Type
         self.car_type = "sports"
-
-        # Particles
-        self.particle_time = 0
-        self.particle_amount = 0.07 # The lower, the more
-        self.particle_pivot = Entity(parent = self)
-        self.particle_pivot.position = (0, -1, -2)
-
-        # TrailRenderer
-        self.trail_pivot = Entity(parent = self, position = (0, -1, 2))
-
-        self.trail_renderer1 = TrailRenderer(parent = self.particle_pivot, position = (0.8, -0.2, 0), color = color.black, alpha = 0, thickness = 7, length = 200)
-        self.trail_renderer2 = TrailRenderer(parent = self.particle_pivot, position = (-0.8, -0.2, 0), color = color.black, alpha = 0, thickness = 7, length = 200)
-        self.trail_renderer3 = TrailRenderer(parent = self.trail_pivot, position = (0.8, -0.2, 0), color = color.black, alpha = 0, thickness = 7, length = 200)
-        self.trail_renderer4 = TrailRenderer(parent = self.trail_pivot, position = (-0.8, -0.2, 0), color = color.black, alpha = 0, thickness = 7, length = 200)
-        
-        self.trails = [self.trail_renderer1, self.trail_renderer2, self.trail_renderer3, self.trail_renderer4]
-        self.start_trail = True
 
         # Collision
         self.copy_normals = False
@@ -153,8 +135,6 @@ class Car(Entity):
         self.turning_speed = 6
         self.max_rotation_speed = 1.6
         self.steering_amount = 9
-        self.particle_pivot.position = (0, -1, -1.5)
-        self.trail_pivot.position = (0, -1, 1.5)
 
     def update_camera(self):
         if self.camera_follow:
@@ -183,14 +163,6 @@ class Car(Entity):
         # Reset the car's position if y value is greater than 300
         if self.y >= 300:
             self.reset_car()
-
-    def display_particles(self):
-        # Particles
-        self.particle_time += DELTA_T
-        if self.particle_time >= self.particle_amount:
-            self.particle_time = 0
-            self.particles = Particles(self, self.particle_pivot.world_position - (0, 1, 0))
-            self.particles.destroy(1)
 
     def hand_brake(self):
         # Hand Braking
@@ -293,8 +265,6 @@ class Car(Entity):
         if held_keys[self.controls[0]] or held_keys["up arrow"]:
             self.speed += self.acceleration * DELTA_T
             self.driving = True
-
-            self.display_particles()
         else:
             self.driving = False
             if self.speed > 1:
@@ -409,10 +379,6 @@ class Car(Entity):
         self.speed = 0
         self.velocity_y = 0
         self.timer_running = False
-        for trail in self.trails:
-            if trail.trailing:
-                trail.end_trail()
-        self.start_trail = True
 
     def simple_intersects(self, entity):
         """

@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 class RobopilotCNN(nn.Module):
-    def __init__(self, output_size=4, dropout_rate=0.3):
+    def __init__(self, output_size=2, dropout_rate=0.3):
         super().__init__()
 
         self.conv = nn.Sequential(
