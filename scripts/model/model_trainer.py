@@ -12,6 +12,8 @@ EPOCHS = 50
 VAL_SPLIT = 0.2
 FILES_PATH = "record_*.npz"
 
+DELTA_FRAMES = 1
+
 EARLY_STOPPING_PATIENCE = 10  
 EARLY_STOPPING_MIN_DELTA = 1e-4
 
@@ -22,7 +24,7 @@ GAMMA = 0.95
 
 
 def prepare_datas():
-    features, labels = process_datas(FILES_PATH)
+    features, labels = process_datas(FILES_PATH, DELTA_FRAMES)
 
     features_len = len(features)
     labels_len = len(labels)
@@ -47,9 +49,9 @@ def train():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False)
 
-    model = RobopilotCNN(output_size=4).to(device)
+    model = RobopilotCNN(output_size=2).to(device)
 
-    criterion = nn.BCELoss()
+    criterion = nn.BCEWithLogitsLoss()
 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)

@@ -5,9 +5,74 @@ from rallyrobopilot import *
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6 import QtCore, QtWidgets, QtGui
 from PyQt6 import uic
+from model.train_tools.process import crop_image_ndarray, resize_image_ndarray
 
 import pickle
 import lzma
+
+import numpy as np
+import cv2
+
+def pack_snapshots_to_arrays(snaps, crop_ratio=0.62, out_size=(128,128), keep_images=True):
+    """
+    Convertit une liste de SensingSnapshot en arrays NumPy prêts à être sauvegardés.
+    - Images: crop (haut jusqu'à crop_ratio) + resize via helpers, en uint8 (pas de normalisation ici).
+    - Le reste (controls, speed, angle, position, rays) en formats compacts.
+    """
+    imgs, speeds, angles, poss, rays_list, ctrls = [], [], [], [], [], []
+
+    # Longueur des rayons (R)
+    R = 0
+    for s in snaps:
+        if s.raycast_distances is not None and len(s.raycast_distances) > 0:
+            R = len(s.raycast_distances)
+            break
+
+    for s in snaps:
+        # Controls -> uint8
+        ctrls.append([
+            int(bool(s.current_controls[0])),
+            int(bool(s.current_controls[1])),
+            int(bool(s.current_controls[2])),
+            int(bool(s.current_controls[3])),
+        ])
+
+        # Scalars / vecteurs
+        speeds.append(np.float32(s.car_speed))
+        angles.append(np.float32(s.car_angle))
+        poss.append([
+            np.float32(s.car_position[0]),
+            np.float32(s.car_position[1]),
+            np.float32(s.car_position[2]),
+        ])
+
+        # Rays -> float32 taille fixe R (pad si nécessaire)
+        r = np.asarray(s.raycast_distances, dtype=np.float32) if s.raycast_distances is not None else np.zeros((0,), np.float32)
+        if r.size != R:
+            rr = np.zeros((R,), np.float32)
+            rr[:min(R, r.size)] = r[:min(R, r.size)]
+            r = rr
+        rays_list.append(r)
+
+        # Image -> crop + resize (uint8) si demandé
+        if keep_images and (s.image is not None):
+            #img = crop_image_ndarray(s.image, 0, 1, 0, crop_ratio)          # garde le haut
+            img = resize_image_ndarray(s.image, target_size=out_size)           # (W,H)
+            imgs.append(img.astype(np.uint8))
+
+    out = {
+        "controls":  np.asarray(ctrls,  dtype=np.uint8),     # (N,4)
+        "speed":     np.asarray(speeds, dtype=np.float32),   # (N,)
+        "angle":     np.asarray(angles, dtype=np.float32),   # (N,)
+        "position":  np.asarray(poss,   dtype=np.float32),   # (N,3)
+        "rays":      np.asarray(rays_list, dtype=np.float32),# (N,R)
+        "ray_count": np.int32(R),
+        "crop_ratio": np.float32(crop_ratio),
+        "out_h": np.int32(out_size[1]),  # out_size = (W,H)
+        "out_w": np.int32(out_size[0]),
+    }
+    out["images"] = np.asarray(imgs, dtype=np.uint8) if (keep_images and len(imgs) > 0) else np.zeros((0,1,1,3), dtype=np.uint8)
+    return out
 
 class DataCollectionUI(QtWidgets.QMainWindow):
     def __init__(self, message_processing_callback = None):
@@ -126,16 +191,27 @@ class DataCollectionUI(QtWidgets.QMainWindow):
             fid += 1
 
         class ThreadedSaver(QtCore.QThread):
-            def __init__(self, path, data):
+            def __init__(self, path, data, crop_ratio=0.62, out_size=(128,128), keep_images=True):
                 super().__init__()
                 self.path = path
                 self.data = data
+                self.crop_ratio = crop_ratio
+                self.out_size = out_size
+                self.keep_images = keep_images
 
             def run(self):
-                with lzma.open(self.path, "wb") as f:
-                    pickle.dump(self.data, f)
+                arrays = pack_snapshots_to_arrays(
+                    self.data,
+                    crop_ratio=self.crop_ratio,
+                    out_size=self.out_size,
+                    keep_images=self.keep_images
+                )
+                # Écriture TRÈS rapide : Zip Deflate interne
+                np.savez_compressed(self.path, **arrays)
 
-        self.saving_worker = ThreadedSaver(record_name % fid, self.recorded_data)
+        self.saving_worker = ThreadedSaver(record_name % fid, self.recorded_data,
+                                   crop_ratio=0.62, out_size=(128,128),
+                                   keep_images=self.saveImgCheckBox.isChecked())
         self.recorded_data = []
         self.nbrSnapshotSaved.setText("0")
         self.saving_worker.finished.connect(self.onRecordSaveDone)

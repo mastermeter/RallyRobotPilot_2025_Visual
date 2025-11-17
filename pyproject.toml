@@ -1,0 +1,18 @@
+[project]
+name = "rallyrobotpilot-2025-visual"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask==3.0.3",
+    "imageio==2.35.1",
+    "numpy>=2.1.0",
+    "opencv-python>=4.11.0.86",
+    "psd-tools3==1.8.2",
+    "pyqt6>=6.10.0",
+    "screeninfo==0.8.1",
+    "setuptools>=80.9.0",
+    "ursina==5.0.0",
+    "ursinanetworking==2.1.4",
+]

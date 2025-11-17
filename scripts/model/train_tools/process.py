@@ -1,6 +1,5 @@
-
-import pickle
-import lzma
+import os
+import numpy as np
 import cv2
 import glob
 
@@ -24,26 +23,45 @@ def normalize_image_ndarray(image_array):
     normalized = image_array.astype('float32') / 255.0
     return normalized
 
-def process_datas(files_path="record_*.npz"):
+def process_datas(files_path="record_*.npz", delta_frames=2):
     files_list = sorted(glob.glob(files_path))
     print(f"Found {len(files_list)} files to process.")
     
+    features = []  
+    labels = []  
+
     for filePath in files_list:
-        feature = []
-        label = []
-        with lzma.open(filePath, "rb") as file:
-            datas = pickle.load(file)
+        ext = os.path.splitext(filePath)[1].lower()
 
-            for data in datas:
-                image_array = data.image
-                croped_image_array = crop_image_ndarray(image_array, 0, 1, 0, 0.62)
-                croped_resized_image_array = resize_image_ndarray(croped_image_array, target_size=(128, 128))
-                croped_resized_image_array = normalize_image_ndarray(croped_resized_image_array)
+        if ext == ".npz":
+            d = np.load(filePath, allow_pickle=False)
+            if 'images' not in d or 'controls' not in d:
+                print(f"[skip] {filePath} missing 'images' or 'controls'")
+                continue
 
-                feature.append(croped_resized_image_array)
-                label.append(data.current_controls)
+            imgs = d['images']      # (N,H,W,3) uint8
+            ctrls = d['controls']   # (N,4)
 
-    return feature, label
+            if len(imgs) == 0:
+                continue
+
+            k = max(0, min(delta_frames, len(imgs)-1))
+            N = len(imgs) - k
+            if N <= 0:
+                continue
+
+            for i in range(N):
+                img = imgs[i]
+
+                img = normalize_image_ndarray(img)     # float32 [0..1]
+                features.append(img)
+
+                f,b,l,r = ctrls[i + k].astype(np.float32)
+                labels.append(np.array([l, r], dtype=np.float32))  # steering-only
+    
+    print(f"Processed {len(features)} samples.")
+
+    return features, labels
 
 if __name__ == "__main__":
     process_datas()

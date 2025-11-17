@@ -1,0 +1,8 @@
+flask==3.0.3
+imageio==2.35.1
+numpy>=2.1.0
+psd-tools3==1.8.2
+screeninfo==0.8.1
+setuptools>=80.9.0
+ursina==5.0.0
+ursinanetworking==2.1.4
