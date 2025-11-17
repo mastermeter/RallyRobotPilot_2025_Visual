@@ -6,6 +6,7 @@ from ursina import curve
 from .particles import Particles, TrailRenderer
 from math import pow, atan2
 import json
+from .raycast_sensor import MAX_RAYCAST_DIST
 
 sign = lambda x: -1 if x < 0 else (1 if x > 0 else 0)
 Text.default_resolution = 1080 * Text.size
@@ -134,6 +135,20 @@ class Car(Entity):
         invoke(self.update_model_path, delay = 1)
 
         self.multiray_sensor = None
+
+    def estimate_track_width(self):
+        if self.multiray_sensor is None:
+            return None
+        distances = getattr(self.multiray_sensor, "distances", None)
+        if not distances:
+            return None
+        left = distances[0]
+        right = distances[-1]
+
+        if left is None and right is None:
+            return None
+        
+        return float(left + right)
 
     def set_track(self, track):
         self.track = track

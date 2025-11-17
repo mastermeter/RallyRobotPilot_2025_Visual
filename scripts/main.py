@@ -1,7 +1,7 @@
 from rallyrobopilot import prepare_game_app, RemoteController
 from flask import Flask, request, jsonify
 from threading import Thread
-
+from checkpoints import CheckpointManager
 
 # Setup Flask
 flask_app = Flask(__name__)
@@ -13,5 +13,14 @@ app, car = prepare_game_app("SimpleTrack")
 # NotSoSimpleTrack # SimpleTrack # SlightlyHarder # VisualTrack
 # VisualTrack/track_circuit2_metadata.json
 # VisualTrack/track_circuit3_metadata.json
+
+cp_manager = CheckpointManager(
+    car=car,
+    track_name="SimpleTrack",
+    save_dir="tracks",
+    spacing=20.0,
+    sample_step=3.0
+)
+
 remote_controller = RemoteController(car = car, connection_port=7654, flask_app=flask_app)
 app.run()
