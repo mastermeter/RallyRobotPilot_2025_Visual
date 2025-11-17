@@ -1,6 +1,4 @@
 import os
-import pickle
-import lzma
 import numpy as np
 import cv2
 import glob
@@ -60,6 +58,8 @@ def process_datas(files_path="record_*.npz", delta_frames=2):
 
                 f,b,l,r = ctrls[i + k].astype(np.float32)
                 labels.append(np.array([l, r], dtype=np.float32))  # steering-only
+    
+    print(f"Processed {len(features)} samples.")
 
     return features, labels
 

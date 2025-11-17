@@ -15,16 +15,16 @@ MODEL_PATH = "scripts/model/output/robopilot_cnn_best.pth"
 
 def preprocess_for_model(image_array):
     # même préproc que l’entraînement
-    cropped   = crop_image_ndarray(image_array, 0, 1, 0, 0.62)
-    resized   = resize_image_ndarray(cropped, target_size=(128, 128))
+    #cropped   = crop_image_ndarray(image_array, 0, 1, 0, 0.62)
+    resized   = resize_image_ndarray(image_array, target_size=(128, 128))
     normalized= normalize_image_ndarray(resized)
     chw = np.transpose(normalized, (2, 0, 1))
     return torch.tensor(chw, dtype=torch.float32).unsqueeze(0)
 
 class NNMsgProcessor:
-    TH_ON, TH_OFF = 0.55, 0.45
+    TH_ON, TH_OFF = 0.3, 0.2
 
-    V_SET = 7.5       # speed target (m/s)
+    V_SET = 7.5        # speed target (m/s)
     BAND  = 1.0       # speed deadband (m/s)
 
     KICK_MS = 350 
@@ -58,6 +58,7 @@ class NNMsgProcessor:
             data_collector.onCarControlled(key, want)
 
     def _hysteresis_steer(self, p_left, p_right):
+        print(f"Steer probabilities: L={p_left:.3f} R={p_right:.3f}")
         # gauche
         if self.hold_left:
             self.hold_left = (p_left >= self.TH_OFF) and (p_right < self.TH_ON or p_left >= p_right)
@@ -77,7 +78,8 @@ class NNMsgProcessor:
             return False, False
         x = preprocess_for_model(frame_rgb).to(self.device)
         with torch.no_grad():
-            p_left, p_right = self.model(x)[0].detach().cpu().numpy().tolist()
+            logits = self.model(x)[0]                  
+            p_left, p_right = torch.sigmoid(logits).cpu().numpy().tolist()
         return self._hysteresis_steer(p_left, p_right)
 
     def _update_forward_from_speed(self, speed):

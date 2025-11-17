@@ -1,4 +1,4 @@
-from rallyrobopilot import Car, Track, SunLight, MultiRaySensor
+from rallyrobopilot import Car, Track, MultiRaySensor
 from ursina import *
 
 
@@ -43,12 +43,6 @@ def prepare_game_app(track_name = "SimpleTrack"):
     
     car.multiray_sensor = MultiRaySensor(car, 15, 90)
     car.multiray_sensor.enable()
-    
-    # Lighting + shadows
-    sun = SunLight(direction = (-0.7, -0.9, 0.5), resolution = 3072, car = car)
-    ambient = AmbientLight(color = Vec4(0.5, 0.55, 0.66, 0) * 0.75)
-    
-    render.setShaderAuto()
     
     # Sky
     Sky(texture = "sky")

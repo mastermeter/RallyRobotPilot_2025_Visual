@@ -28,8 +28,7 @@ class RobopilotCNN(nn.Module):
             nn.Linear(128 * 8 * 8, 256),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(256, output_size),
-            nn.Sigmoid()                           
+            nn.Linear(256, output_size)                        
         )
 
     def forward(self, x):

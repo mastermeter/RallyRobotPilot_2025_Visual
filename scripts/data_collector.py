@@ -56,8 +56,8 @@ def pack_snapshots_to_arrays(snaps, crop_ratio=0.62, out_size=(128,128), keep_im
 
         # Image -> crop + resize (uint8) si demandé
         if keep_images and (s.image is not None):
-            img = crop_image_ndarray(s.image, 0, 1, 0, crop_ratio)          # garde le haut
-            img = resize_image_ndarray(img, target_size=out_size)           # (W,H)
+            #img = crop_image_ndarray(s.image, 0, 1, 0, crop_ratio)          # garde le haut
+            img = resize_image_ndarray(s.image, target_size=out_size)           # (W,H)
             imgs.append(img.astype(np.uint8))
 
     out = {

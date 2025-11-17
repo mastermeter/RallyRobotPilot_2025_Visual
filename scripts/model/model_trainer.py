@@ -51,7 +51,7 @@ def train():
 
     model = RobopilotCNN(output_size=2).to(device)
 
-    criterion = nn.BCELoss()
+    criterion = nn.BCEWithLogitsLoss()
 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
