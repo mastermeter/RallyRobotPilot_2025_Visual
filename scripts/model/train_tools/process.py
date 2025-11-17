@@ -23,45 +23,41 @@ def normalize_image_ndarray(image_array):
     normalized = image_array.astype('float32') / 255.0
     return normalized
 
-def process_datas(files_path="record_*.npz", delta_frames=2):
+def process_datas(files_path="record_*.npz"):
+    """
+    Charge tous les fichiers .npz et renvoie :
+      - all_imgs : liste de tableaux (N_i, H, W, 3) uint8
+      - all_ctrls : liste de tableaux (N_i, 4) [f,b,l,r]
+    On ne construit PAS encore les séquences, pour éviter d'exploser la RAM.
+    """
     files_list = sorted(glob.glob(files_path))
     print(f"Found {len(files_list)} files to process.")
-    
-    features = []  
-    labels = []  
+
+    features = []
+    labels = []
 
     for filePath in files_list:
         ext = os.path.splitext(filePath)[1].lower()
+        if ext != ".npz":
+            continue
 
-        if ext == ".npz":
-            d = np.load(filePath, allow_pickle=False)
-            if 'images' not in d or 'controls' not in d:
-                print(f"[skip] {filePath} missing 'images' or 'controls'")
-                continue
+        d = np.load(filePath, allow_pickle=False)
+        if "images" not in d or "controls" not in d:
+            print(f"[skip] {filePath} missing 'images' or 'controls'")
+            continue
 
-            imgs = d['images']      # (N,H,W,3) uint8
-            ctrls = d['controls']   # (N,4)
+        imgs = d["images"]    # (N, H, W, 3) uint8
+        ctrls = d["controls"] # (N, 4)
 
-            if len(imgs) == 0:
-                continue
+        if len(imgs) == 0:
+            continue
 
-            k = max(0, min(delta_frames, len(imgs)-1))
-            N = len(imgs) - k
-            if N <= 0:
-                continue
+        features.append(imgs)
+        labels.append(ctrls)
 
-            for i in range(N):
-                img = imgs[i]
-
-                img = normalize_image_ndarray(img)     # float32 [0..1]
-                features.append(img)
-
-                f,b,l,r = ctrls[i + k].astype(np.float32)
-                labels.append(np.array([l, r], dtype=np.float32))  # steering-only
-    
-    print(f"Processed {len(features)} samples.")
-
+    print(f"Loaded {len(features)} files.")
     return features, labels
+
 
 if __name__ == "__main__":
     process_datas()

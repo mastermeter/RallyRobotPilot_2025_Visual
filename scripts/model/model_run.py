@@ -1,6 +1,7 @@
 import sys, os, time
 import torch
 import numpy as np
+from collections import deque
 from PyQt6 import QtWidgets
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -8,117 +9,199 @@ PARENT_DIR = os.path.dirname(CURRENT_DIR)
 sys.path.append(PARENT_DIR)
 
 from data_collector import DataCollectionUI
-from model.train_tools.RobopilotCNN import RobopilotCNN
-from model.train_tools.process import normalize_image_ndarray, resize_image_ndarray, crop_image_ndarray
+from model.train_tools.RobopilotCNNLSTM import RobopilotCNNLSTM
+from model.train_tools.process import (
+    normalize_image_ndarray,
+    resize_image_ndarray,
+    crop_image_ndarray,
+)
 
-MODEL_PATH = "scripts/model/output/robopilot_cnn_best.pth"
+MODEL_PATH = "scripts/model/output/robopilot_cnn_lstm_best.pth"
+SEQ_LEN = 8  # doit matcher l'entraînement
+
 
 def preprocess_for_model(image_array):
-    # même préproc que l’entraînement
-    #cropped   = crop_image_ndarray(image_array, 0, 1, 0, 0.62)
-    resized   = resize_image_ndarray(image_array, target_size=(128, 128))
-    normalized= normalize_image_ndarray(resized)
-    chw = np.transpose(normalized, (2, 0, 1))
-    return torch.tensor(chw, dtype=torch.float32).unsqueeze(0)
+    """
+    Même préproc que lors de la collecte :
+    raw image -> crop top -> resize 128x128 -> normalize [0,1]
+    """
+    cropped   = crop_image_ndarray(image_array, 0, 1, 0, 0.62)
+    resized   = resize_image_ndarray(cropped, target_size=(128, 128))
+    normalized = normalize_image_ndarray(resized)
+    return normalized  # (H, W, 3), float32
+
 
 class NNMsgProcessor:
-    TH_ON, TH_OFF = 0.3, 0.2
+    # Hystérésis pour L/R
+    TH_LR_ON, TH_LR_OFF = 0.55, 0.45
+    # Hystérésis pour forward
+    TH_F_ON, TH_F_OFF = 0.60, 0.40
 
-    V_SET = 7.5        # speed target (m/s)
-    BAND  = 1.0       # speed deadband (m/s)
+    # petite "coast" si turn très fort
+    COAST_TH = 0.80
+    COAST_MS = 140
 
-    KICK_MS = 350 
-    KICK_SPEED_TH = 0.2
+    # petit kick au tout début si le modèle est timide
+    STARTUP_MS = 800
+    STARTUP_MIN_PF = 0.30
 
-    def __init__(self, model_path=MODEL_PATH, device=None):
+    def __init__(self, model_path=MODEL_PATH, device=None, debug=False):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
-        print(f"Using device: {self.device}")
+        self.debug = debug
+        print(f"[RUN] Using device: {self.device}")
 
-        self.model = RobopilotCNN(output_size=2).to(self.device)
+        # Modèle CNN+LSTM à 3 sorties (logits): [forward, left, right]
+        self.model = RobopilotCNNLSTM(
+            in_channels=3,
+            seq_len=SEQ_LEN,
+            cnn_feature_dim=256,
+            lstm_hidden_dim=128,
+            lstm_num_layers=1,
+            output_size=3,
+            dropout_rate=0.3,
+        ).to(self.device)
         self.model.eval()
+
         ckpt = torch.load(model_path, map_location=self.device)
         self.model.load_state_dict(ckpt["model_state_dict"])
+        print("[RUN] CNN+LSTM model weights loaded.")
 
+        # état des touches
         self.state = {"forward": False, "back": False, "left": False, "right": False}
+        # hystérésis
         self.hold_left = False
         self.hold_right = False
+        self.hold_forward = False
 
-        self.forward_hold = False
-        self.first_tick_ms = None
-        self.kick_until_ms = 0.0
+        # coast et startup
+        self.coast_until = 0.0
+        self.t0_ms = None
 
-        print("[NNMsgProcessor] Loaded (steer L/R + speed governor).")
+        # buffer de séquence d'images préprocessées
+        self.buffer = deque(maxlen=SEQ_LEN)
 
-    def _send(self, data_collector, key, want):
+    def _send(self, ui, key, want):
         cur = self.state[key]
         if cur != want:
             self.state[key] = want
-            data_collector.onCarControlled(key, want)
+            ui.onCarControlled(key, want)
 
-    def _hysteresis_steer(self, p_left, p_right):
-        print(f"Steer probabilities: L={p_left:.3f} R={p_right:.3f}")
+    def _hyst_lr(self, p_left, p_right):
         # gauche
         if self.hold_left:
-            self.hold_left = (p_left >= self.TH_OFF) and (p_right < self.TH_ON or p_left >= p_right)
+            self.hold_left = (p_left >= self.TH_LR_OFF) and (p_right < self.TH_LR_ON or p_left >= p_right)
         else:
-            self.hold_left = (p_left >= self.TH_ON) and (p_left >= p_right)
+            self.hold_left = (p_left >= self.TH_LR_ON) and (p_left >= p_right)
+        # droite
         if self.hold_right:
-            self.hold_right = (p_right >= self.TH_OFF) and (p_left < self.TH_ON or p_right >= p_left)
+            self.hold_right = (p_right >= self.TH_LR_OFF) and (p_left < self.TH_LR_ON or p_right >= p_left)
         else:
-            self.hold_right = (p_right >= self.TH_ON) and (p_right >= p_left)
+            self.hold_right = (p_right >= self.TH_LR_ON) and (p_right >= p_left)
+
+        # exclusif
         if self.hold_left and self.hold_right:
-            if p_left > p_right: self.hold_right = False
-            else:                self.hold_left  = False
+            if p_left > p_right:
+                self.hold_right = False
+            else:
+                self.hold_left = False
+
         return self.hold_left, self.hold_right
 
-    def _infer_steer(self, frame_rgb):
-        if frame_rgb is None:
-            return False, False
-        x = preprocess_for_model(frame_rgb).to(self.device)
+    def _hyst_forward(self, p_f):
+        if self.hold_forward:
+            self.hold_forward = (p_f >= self.TH_F_OFF)
+        else:
+            self.hold_forward = (p_f >= self.TH_F_ON)
+        return self.hold_forward
+
+    def _infer_probs(self):
+        """
+        Utilise le buffer de SEQ_LEN frames :
+        - construit un tensor (1, T, 3, 128, 128)
+        - renvoie [p_f, p_l, p_r]
+        """
+        if len(self.buffer) == 0:
+            return None
+
+        # si moins de T frames, on pad en dupliquant la première
+        if len(self.buffer) < SEQ_LEN:
+            first = self.buffer[0]
+            pad_needed = SEQ_LEN - len(self.buffer)
+            frames = [first] * pad_needed + list(self.buffer)
+        else:
+            frames = list(self.buffer)[-SEQ_LEN:]
+
+        seq = np.stack(frames, axis=0)  # (T, H, W, 3)
+        seq = np.transpose(seq, (0, 3, 1, 2))  # (T, 3, H, W)
+        x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(self.device)  # (1, T, C, H, W)
+
         with torch.no_grad():
-            logits = self.model(x)[0]                  
-            p_left, p_right = torch.sigmoid(logits).cpu().numpy().tolist()
-        return self._hysteresis_steer(p_left, p_right)
+            logits = self.model(x)[0]                  # (3,)
+            probs = torch.sigmoid(logits).cpu().numpy() # [0,1]
 
-    def _update_forward_from_speed(self, speed):
-        now_ms = time.time() * 1000.0
+        return probs.tolist()  # [p_f, p_l, p_r]
 
-        if self.first_tick_ms is None:
-            self.first_tick_ms = now_ms
-        if speed < self.KICK_SPEED_TH and (now_ms - self.first_tick_ms) < 2000:
-            self.kick_until_ms = max(self.kick_until_ms, now_ms + self.KICK_MS)
+    def process_message(self, message, ui: DataCollectionUI):
+        if self.t0_ms is None:
+            self.t0_ms = time.time() * 1000.0
 
-        if now_ms < self.kick_until_ms:
-            self.forward_hold = True
+        # 1) Préproc et ajout dans le buffer
+        if message.image is None:
+            return
+        img_norm = preprocess_for_model(message.image)   # (H, W, 3), float32
+        self.buffer.append(img_norm)
+
+        # 2) Inférence si on a au moins 1 frame
+        probs = self._infer_probs()
+        if probs is None:
             return
 
-        lo = self.V_SET - self.BAND
-        hi = self.V_SET + self.BAND
-        if speed < lo:
-            self.forward_hold = True
-        elif speed > hi:
-            self.forward_hold = False
+        p_f, p_l, p_r = probs
 
-    def process_message(self, message, data_collector):
-        hold_l, hold_r = self._infer_steer(message.image)
-        self._send(data_collector, "left",  hold_l)
-        self._send(data_collector, "right", hold_r)
+        # 3) Steer
+        hold_l, hold_r = self._hyst_lr(p_l, p_r)
+        turn_intensity = max(p_l, p_r)
 
-        spd = float(getattr(message, "car_speed", 0.0))
-        self._update_forward_from_speed(spd)
-        self._send(data_collector, "forward", self.forward_hold)
+        # 4) Forward hystérésis
+        want_f = self._hyst_forward(p_f)
 
-        self._send(data_collector, "back", False)
+        # petit kick au début si le modèle est trop timide
+        now_ms = time.time() * 1000.0
+        if (now_ms - self.t0_ms) < self.STARTUP_MS and not want_f and p_f < self.STARTUP_MIN_PF:
+            want_f = True
+            self.hold_forward = True
+
+        # coast court quand gros virage
+        if turn_intensity > self.COAST_TH and now_ms >= self.coast_until:
+            self.coast_until = now_ms + self.COAST_MS
+            want_f = False
+            self.hold_forward = False
+        if now_ms < self.coast_until:
+            want_f = False
+
+        # 5) Envoi des commandes
+        self._send(ui, "left",  hold_l)
+        self._send(ui, "right", hold_r)
+        self._send(ui, "forward", want_f)
+        self._send(ui, "back", False)
+
+        if self.debug:
+            print(
+                f"P(f,l,r)=({p_f:.2f},{p_l:.2f},{p_r:.2f})  "
+                f"LR=({hold_l},{hold_r})  F={want_f}"
+            )
+
 
 def except_hook(cls, exception, traceback):
     sys.__excepthook__(cls, exception, traceback)
 
+
 if __name__ == "__main__":
     sys.excepthook = except_hook
     app = QtWidgets.QApplication(sys.argv)
-    brain = NNMsgProcessor(MODEL_PATH)
+    brain = NNMsgProcessor(MODEL_PATH, debug=False)
     win = DataCollectionUI(brain.process_message)
     win.show()
     app.exec()

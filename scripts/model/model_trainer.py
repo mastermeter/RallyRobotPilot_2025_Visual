@@ -5,14 +5,15 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 from train_tools.process import process_datas
 from train_tools.RoboDataset import RoboDataset
-from train_tools.RobopilotCNN import RobopilotCNN
+from train_tools.RobopilotCNNLSTM import RobopilotCNNLSTM
 
 BATCH_SIZE = 64
 EPOCHS = 50
 VAL_SPLIT = 0.2
 FILES_PATH = "record_*.npz"
 
-DELTA_FRAMES = 1
+SEQ_LEN = 8          
+DELTA_FRAMES = 1     
 
 EARLY_STOPPING_PATIENCE = 10  
 EARLY_STOPPING_MIN_DELTA = 1e-4
@@ -24,7 +25,7 @@ GAMMA = 0.95
 
 
 def prepare_datas():
-    features, labels = process_datas(FILES_PATH, DELTA_FRAMES)
+    features, labels = process_datas(FILES_PATH)
 
     features_len = len(features)
     labels_len = len(labels)
@@ -32,12 +33,18 @@ def prepare_datas():
     if features_len != labels_len:
         raise Exception("Features and Labels have not the same size")
 
-    dataset = RoboDataset(features, labels)
+    dataset = RoboDataset(
+        features,
+        labels,
+        seq_len=SEQ_LEN,
+        delta_frames=DELTA_FRAMES,
+    )
 
     val_size = int(len(dataset) * VAL_SPLIT)
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
+    print(f"Train size: {train_size}, Val size: {val_size}")
     return train_dataset, val_dataset
 
 def train():
@@ -49,7 +56,15 @@ def train():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False)
 
-    model = RobopilotCNN(output_size=2).to(device)
+    model = RobopilotCNNLSTM(
+        in_channels=3,
+        seq_len=SEQ_LEN,
+        cnn_feature_dim=256,
+        lstm_hidden_dim=128,
+        lstm_num_layers=1,
+        output_size=3,
+        dropout_rate=0.3,
+    ).to(device)
 
     criterion = nn.BCEWithLogitsLoss()
 
