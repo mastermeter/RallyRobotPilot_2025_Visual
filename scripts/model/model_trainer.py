@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
 import torch.nn as nn
+import os
 
 from torch.utils.data import DataLoader, random_split
 from train_tools.process import process_datas
@@ -12,7 +13,7 @@ EPOCHS = 50
 VAL_SPLIT = 0.2
 FILES_PATH = "record_*.npz"
 
-SEQ_LEN = 8          
+SEQ_LEN = 11          
 DELTA_FRAMES = 1     
 
 EARLY_STOPPING_PATIENCE = 10  
@@ -53,8 +54,17 @@ def train():
 
     train_dataset, val_dataset = prepare_datas()
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False)
+    #Thread number for DataLoader
+    cpu_count = os.cpu_count()
+    print(f"CPU count: {cpu_count}")
+    NUM_WORKERS = max(1, cpu_count - int((cpu_count / 6))) #type: ignore
+    NUM_WORKERS = min(NUM_WORKERS, 8) 
+    NUM_WORKERS = 0
+    print(f"DataLoader num_workers: {NUM_WORKERS}")
+    USE_PINNED_MEMORY = False #True
+
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, pin_memory=USE_PINNED_MEMORY) # type: ignore
+    val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=USE_PINNED_MEMORY) # type: ignore
 
     model = RobopilotCNNLSTM(
         in_channels=3,
@@ -100,8 +110,8 @@ def train():
         running_val_loss = 0.0
         with torch.no_grad():
             for imgs, labels in val_loader:
-                imgs = imgs.to(device)
-                labels = labels.to(device)
+                imgs = imgs.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
 
                 outputs = model(imgs)
                 loss = criterion(outputs, labels)

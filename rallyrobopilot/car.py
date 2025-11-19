@@ -274,6 +274,8 @@ class Car(Entity):
         if held_keys["escape"]:
             quit()
 
+        self.hitting_wall = False
+
         self.check_respawn()
 
         #   Process inputs & update speed
@@ -339,30 +341,35 @@ class Car(Entity):
 
         #   Return residual distance to travel and residual speed.
         def move_car(distance_to_travel, direction):
-            front_collision = boxcast(origin = self.world_position, direction = self.forward * direction, thickness = (0.1, 0.1), distance = self.scale_x + distance_to_travel, ignore = [self, ])
+            front_collision = boxcast(
+                origin = self.world_position, 
+                direction = self.forward * direction, 
+                thickness = (0.1, 0.1), 
+                distance = self.scale_x + distance_to_travel, 
+                ignore = [self, ]
+            ) # type: ignore
 
-            #   Detect collision
-            if front_collision.distance < self.scale_x + distance_to_travel:
+            collided = front_collision.hit and front_collision.distance < self.scale_x + distance_to_travel
+
+            if collided:
+                self.hitting_wall = True
+
                 free_dist = front_collision.distance - self.scale_x + distance_to_travel
 
-                #   cancel speed going directly into the obstacle
                 next_forward = self.forward - (self.forward.dot(front_collision.world_normal)) * front_collision.world_normal
-                self.speed = self.speed * (0.5 + 0.5 * (self.forward.dot(front_collision.world_normal))) # Loose half speed on collision and some depending on the angle
+                self.speed = self.speed * (0.5 + 0.5 * (self.forward.dot(front_collision.world_normal)))
 
                 self.rotation_y = atan2(next_forward[0], next_forward[2]) / 3.14159 * 180
                 dist_left_to_travel = distance_to_travel - free_dist
 
-                #   Move car away from obstacle to prevent overlap due to *¦@+!? physics system
                 OBSTACLE_DISPLACEMENT_MARGIN = 1
                 self.x += (front_collision.world_normal * OBSTACLE_DISPLACEMENT_MARGIN).x
                 self.z += (front_collision.world_normal * OBSTACLE_DISPLACEMENT_MARGIN).z
 
                 return 0
-
             else:
                 self.x += self.forward[0] * distance_to_travel
                 self.z += self.forward[2] * distance_to_travel
-
                 return 0
 
         for i in range(2):

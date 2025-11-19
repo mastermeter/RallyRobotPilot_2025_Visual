@@ -12,7 +12,6 @@ class RoboDataset(Dataset):
         self.seq_len = int(seq_len)
         self.delta = max(1, int(delta_frames))
 
-        # index global: liste de (file_idx, t_end)
         self.index = []
         for f_idx, imgs in enumerate(self.all_imgs):
             N = len(imgs)
@@ -32,21 +31,17 @@ class RoboDataset(Dataset):
         imgs = self.all_imgs[f_idx]
         ctrls = self.all_ctrls[f_idx]
 
-        # indices de la séquence (en remontant de delta_frames)
         idxs = [t_end - i * self.delta for i in range(self.seq_len)][::-1]
 
-        seq = []
-        for i in idxs:
-            img = imgs[i]                       # (H, W, 3) uint8
-            img = normalize_image_ndarray(img)  # float32 [0,1]
-            seq.append(img)
+        seq = [imgs[i] for i in idxs]
 
-        seq = np.stack(seq, axis=0)            # (T, H, W, 3)
-        seq = np.transpose(seq, (0, 3, 1, 2))  # (T, C, H, W)
+        seq_np = np.stack(seq, axis=0)  # (T, H, W, 3)
+        
+        seq_tensor = torch.tensor(seq_np, dtype=torch.float32)
+        seq_tensor = seq_tensor.permute(0, 3, 1, 2) # (T, C, H, W)
 
         f, b, l, r = ctrls[t_end].astype(np.float32)
         lab = np.array([f, l, r], dtype=np.float32)
-
-        seq_tensor = torch.tensor(seq, dtype=torch.float32)
         lab_tensor = torch.tensor(lab, dtype=torch.float32)
+        
         return seq_tensor, lab_tensor

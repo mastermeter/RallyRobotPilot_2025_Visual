@@ -16,34 +16,25 @@ from model.train_tools.process import (
     crop_image_ndarray,
 )
 
-MODEL_PATH = "scripts/model/output/robopilot_cnn_lstm_best.pth"
-SEQ_LEN = 8  # doit matcher l'entraînement
+MODEL_PATH = "scripts/model/output/robopilot_cnn_signs.pth"
+SEQ_LEN = 8
 
 
 def preprocess_for_model(image_array):
-    """
-    Même préproc que lors de la collecte :
-    raw image -> crop top -> resize 128x128 -> normalize [0,1]
-    """
-    cropped   = crop_image_ndarray(image_array, 0, 1, 0, 0.62)
-    resized   = resize_image_ndarray(cropped, target_size=(128, 128))
+    resized   = resize_image_ndarray(image_array, target_size=(128, 128))
     normalized = normalize_image_ndarray(resized)
     return normalized  # (H, W, 3), float32
 
 
 class NNMsgProcessor:
-    # Hystérésis pour L/R
-    TH_LR_ON, TH_LR_OFF = 0.55, 0.45
-    # Hystérésis pour forward
-    TH_F_ON, TH_F_OFF = 0.60, 0.40
+    TH_LR_ON, TH_LR_OFF = 0.30, 0.30 #0.50
+    TH_F_ON, TH_F_OFF = 0.65, 0.35
 
-    # petite "coast" si turn très fort
     COAST_TH = 0.80
     COAST_MS = 140
 
-    # petit kick au tout début si le modèle est timide
     STARTUP_MS = 800
-    STARTUP_MIN_PF = 0.30
+    STARTUP_MIN_PF = TH_F_ON
 
     def __init__(self, model_path=MODEL_PATH, device=None, debug=False):
         if device is None:
@@ -52,7 +43,6 @@ class NNMsgProcessor:
         self.debug = debug
         print(f"[RUN] Using device: {self.device}")
 
-        # Modèle CNN+LSTM à 3 sorties (logits): [forward, left, right]
         self.model = RobopilotCNNLSTM(
             in_channels=3,
             seq_len=SEQ_LEN,
@@ -68,18 +58,15 @@ class NNMsgProcessor:
         self.model.load_state_dict(ckpt["model_state_dict"])
         print("[RUN] CNN+LSTM model weights loaded.")
 
-        # état des touches
         self.state = {"forward": False, "back": False, "left": False, "right": False}
-        # hystérésis
+
         self.hold_left = False
         self.hold_right = False
         self.hold_forward = False
 
-        # coast et startup
         self.coast_until = 0.0
         self.t0_ms = None
 
-        # buffer de séquence d'images préprocessées
         self.buffer = deque(maxlen=SEQ_LEN)
 
     def _send(self, ui, key, want):
@@ -89,18 +76,18 @@ class NNMsgProcessor:
             ui.onCarControlled(key, want)
 
     def _hyst_lr(self, p_left, p_right):
-        # gauche
+        print(f"p_l={p_left:.2f} p_r={p_right:.2f}")
+
         if self.hold_left:
-            self.hold_left = (p_left >= self.TH_LR_OFF) and (p_right < self.TH_LR_ON or p_left >= p_right)
+            self.hold_left = p_left >= self.TH_LR_OFF
         else:
             self.hold_left = (p_left >= self.TH_LR_ON) and (p_left >= p_right)
-        # droite
+
         if self.hold_right:
-            self.hold_right = (p_right >= self.TH_LR_OFF) and (p_left < self.TH_LR_ON or p_right >= p_left)
+            self.hold_right = p_right >= self.TH_LR_OFF
         else:
             self.hold_right = (p_right >= self.TH_LR_ON) and (p_right >= p_left)
 
-        # exclusif
         if self.hold_left and self.hold_right:
             if p_left > p_right:
                 self.hold_right = False
@@ -117,15 +104,9 @@ class NNMsgProcessor:
         return self.hold_forward
 
     def _infer_probs(self):
-        """
-        Utilise le buffer de SEQ_LEN frames :
-        - construit un tensor (1, T, 3, 128, 128)
-        - renvoie [p_f, p_l, p_r]
-        """
         if len(self.buffer) == 0:
             return None
 
-        # si moins de T frames, on pad en dupliquant la première
         if len(self.buffer) < SEQ_LEN:
             first = self.buffer[0]
             pad_needed = SEQ_LEN - len(self.buffer)
@@ -147,33 +128,27 @@ class NNMsgProcessor:
         if self.t0_ms is None:
             self.t0_ms = time.time() * 1000.0
 
-        # 1) Préproc et ajout dans le buffer
         if message.image is None:
             return
         img_norm = preprocess_for_model(message.image)   # (H, W, 3), float32
         self.buffer.append(img_norm)
 
-        # 2) Inférence si on a au moins 1 frame
         probs = self._infer_probs()
         if probs is None:
             return
 
         p_f, p_l, p_r = probs
 
-        # 3) Steer
         hold_l, hold_r = self._hyst_lr(p_l, p_r)
         turn_intensity = max(p_l, p_r)
 
-        # 4) Forward hystérésis
         want_f = self._hyst_forward(p_f)
 
-        # petit kick au début si le modèle est trop timide
         now_ms = time.time() * 1000.0
         if (now_ms - self.t0_ms) < self.STARTUP_MS and not want_f and p_f < self.STARTUP_MIN_PF:
             want_f = True
             self.hold_forward = True
 
-        # coast court quand gros virage
         if turn_intensity > self.COAST_TH and now_ms >= self.coast_until:
             self.coast_until = now_ms + self.COAST_MS
             want_f = False
@@ -181,7 +156,6 @@ class NNMsgProcessor:
         if now_ms < self.coast_until:
             want_f = False
 
-        # 5) Envoi des commandes
         self._send(ui, "left",  hold_l)
         self._send(ui, "right", hold_r)
         self._send(ui, "forward", want_f)

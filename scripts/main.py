@@ -9,18 +9,18 @@ flask_thread = Thread(target=flask_app.run, kwargs={'host': "0.0.0.0", 'port': 5
 print("Flask server running on port 5000")
 flask_thread.start()
 
-app, car = prepare_game_app("SlightlyHarder")
+app, car = prepare_game_app("VisualTrack/track_circuit3_metadata.json")
 # NotSoSimpleTrack # SimpleTrack # SlightlyHarder # VisualTrack
 # VisualTrack/track_circuit2_metadata.json
 # VisualTrack/track_circuit3_metadata.json
 
-cp_manager = CheckpointManager(
+""" cp_manager = CheckpointManager(
     car=car,
     track_name="SimpleTrack",
     save_dir="tracks",
     spacing=20.0,
     sample_step=3.0
-)
+) """
 
 remote_controller = RemoteController(car = car, connection_port=7654, flask_app=flask_app)
 app.run()

@@ -1,5 +1,6 @@
 from rallyrobopilot import Car, Track, MultiRaySensor
 from ursina import *
+from pathlib import Path
 
 
 def prepare_game_app(track_name = "SimpleTrack"):
@@ -8,12 +9,9 @@ def prepare_game_app(track_name = "SimpleTrack"):
     # Create Window
     window.vsync = False # Set to false to uncap FPS limit of 60
     app = Ursina(size=(1280,1024))
-    print("Asset folder")
-    print(application.asset_folder)
-
-    # Set assets folder. Here assets are one folder up from current location.
-    application.asset_folder = application.asset_folder.parent
-    print("Asset folder")
+    project_root = Path(__file__).resolve().parent.parent
+    application.asset_folder = project_root
+    print("Asset folder:", application.asset_folder)
     print(application.asset_folder)
 
     window.title = "Rally"
@@ -39,7 +37,6 @@ def prepare_game_app(track_name = "SimpleTrack"):
     car.sports_car()
     # Tracks
     car.set_track(track)
-    
     
     car.multiray_sensor = MultiRaySensor(car, 15, 90)
     car.multiray_sensor.enable()

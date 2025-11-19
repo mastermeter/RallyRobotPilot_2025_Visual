@@ -24,17 +24,15 @@ def normalize_image_ndarray(image_array):
     return normalized
 
 def process_datas(files_path="record_*.npz"):
-    """
-    Charge tous les fichiers .npz et renvoie :
-      - all_imgs : liste de tableaux (N_i, H, W, 3) uint8
-      - all_ctrls : liste de tableaux (N_i, 4) [f,b,l,r]
-    On ne construit PAS encore les séquences, pour éviter d'exploser la RAM.
-    """
     files_list = sorted(glob.glob(files_path))
     print(f"Found {len(files_list)} files to process.")
 
     features = []
     labels = []
+
+    forward_count = 0
+    left_count = 0
+    right_count = 0
 
     for filePath in files_list:
         ext = os.path.splitext(filePath)[1].lower()
@@ -52,9 +50,18 @@ def process_datas(files_path="record_*.npz"):
         if len(imgs) == 0:
             continue
 
-        features.append(imgs)
+        imgs_normalized = normalize_image_ndarray(imgs)
+
+        features.append(imgs_normalized)
         labels.append(ctrls)
 
+        forward_count = np.sum(ctrls[:,0])
+        left_count    = np.sum(ctrls[:,2])
+        right_count   = np.sum(ctrls[:,3])
+
+    print(f"Total forward commands: {forward_count}")
+    print(f"Total left commands: {left_count}")
+    print(f"Total right commands: {right_count}")
     print(f"Loaded {len(features)} files.")
     return features, labels
 
