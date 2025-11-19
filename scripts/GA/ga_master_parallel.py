@@ -1,4 +1,3 @@
-# scripts/ga_master_parallel.py
 import sys
 import math
 import time

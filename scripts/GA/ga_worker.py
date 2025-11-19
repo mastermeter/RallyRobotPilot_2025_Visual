@@ -1,4 +1,3 @@
-# scripts/ga_worker.py
 import sys, os
 import math
 import time

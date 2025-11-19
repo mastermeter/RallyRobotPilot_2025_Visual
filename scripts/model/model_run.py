@@ -16,8 +16,8 @@ from model.train_tools.process import (
     crop_image_ndarray,
 )
 
-MODEL_PATH = "scripts/model/output/robopilot_cnn_signs.pth"
-SEQ_LEN = 8
+MODEL_PATH = "scripts/model/output/robopilot_cnn_best_90k_11SEQ.pth"
+SEQ_LEN = 11
 
 
 def preprocess_for_model(image_array):
