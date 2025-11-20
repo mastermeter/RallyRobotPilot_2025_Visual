@@ -2,6 +2,7 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 import os
+import matplotlib.pyplot as plt
 
 from torch.utils.data import DataLoader, random_split
 from train_tools.process import process_datas
@@ -23,6 +24,8 @@ LEARNING_RATE = 0.001
 WEIGHT_DECAY = 1e-4
 STEP_SIZE = 10
 GAMMA = 0.95
+
+PLOT_SAVE_DIR = "scripts/model/output/training_plots/"
 
 
 def prepare_datas():
@@ -47,6 +50,19 @@ def prepare_datas():
 
     print(f"Train size: {train_size}, Val size: {val_size}")
     return train_dataset, val_dataset
+
+def plot_loss_curve(train_history, val_history, save_path):
+    plt.figure(figsize=(12, 6))
+    epochs_range = range(1, len(train_history) + 1)
+    plt.plot(epochs_range, train_history, 'b-o', label='Training Loss')
+    plt.plot(epochs_range, val_history, 'r-o', label='Validation Loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path)
+    plt.close()
 
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -85,6 +101,8 @@ def train():
     best_val_loss = float("inf")
     best_state_dict = None
     patience_counter = 0
+    train_loss_history = []
+    val_loss_history = []
     for epoch in range(EPOCHS):
         model.train()
         running_train_loss = 0.0
@@ -122,6 +140,8 @@ def train():
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
 
+        train_loss_history.append(avg_train_loss)
+        val_loss_history.append(avg_val_loss)
 
         print(
             f"Epoch {epoch+1:03d}/{EPOCHS} "
@@ -140,6 +160,12 @@ def train():
             if patience_counter >= EARLY_STOPPING_PATIENCE:
                 print("Early stopping triggered.")
                 break
+        
+    plot_loss_curve(
+        train_loss_history, 
+        val_loss_history, 
+        os.path.join(PLOT_SAVE_DIR, "training_loss_curve.png")
+    )
 
     torch.save(
         {

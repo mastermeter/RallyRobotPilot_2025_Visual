@@ -1,6 +1,9 @@
 import torch
 import torch.optim as optim
 import torch.nn as nn
+import numpy as np
+import os
+import matplotlib.pyplot as plt
 
 from torch.utils.data import DataLoader, random_split
 from train_tools.old_LR_only.process import process_datas
@@ -22,6 +25,8 @@ WEIGHT_DECAY = 1e-4
 STEP_SIZE = 10
 GAMMA = 0.95
 
+PLOT_SAVE_DIR = "scripts/model/output/training_plots/"
+
 
 def prepare_datas():
     features, labels = process_datas(FILES_PATH, DELTA_FRAMES)
@@ -37,12 +42,29 @@ def prepare_datas():
     val_size = int(len(dataset) * VAL_SPLIT)
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-
+    
+    print(f"Fine-tuning data loaded: {len(dataset)} samples.")
     return train_dataset, val_dataset
+
+def plot_loss_curve(train_history, val_history, save_path):
+    plt.figure(figsize=(12, 6))
+    epochs_range = range(1, len(train_history) + 1)
+    plt.plot(epochs_range, train_history, 'b-o', label='Training Loss')
+    plt.plot(epochs_range, val_history, 'r-o', label='Validation Loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path)
+    plt.close()
 
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+
+    # Créer le dossier pour les plots
+    os.makedirs(PLOT_SAVE_DIR, exist_ok=True)
 
     train_dataset, val_dataset = prepare_datas()
 
@@ -60,6 +82,11 @@ def train():
     best_val_loss = float("inf")
     best_state_dict = None
     patience_counter = 0
+    
+    # Listes pour stocker l'historique des pertes
+    train_loss_history = []
+    val_loss_history = []
+    
     for epoch in range(EPOCHS):
         model.train()
         running_train_loss = 0.0
@@ -96,7 +123,10 @@ def train():
 
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
-
+        
+        # Ajouter les pertes à l'historique
+        train_loss_history.append(avg_train_loss)
+        val_loss_history.append(avg_val_loss)
 
         print(
             f"Epoch {epoch+1:03d}/{EPOCHS} "
@@ -116,15 +146,25 @@ def train():
                 print("Early stopping triggered.")
                 break
 
-    torch.save(
-        {
-            "model_state_dict": best_state_dict,
-            "input": "RGB images 128x128 normalized /255",
-            "task": "multi-label driving control (4 outputs, sigmoid)",
-        },
-        "scripts/model/output/robopilot_cnn_best.pth"
+    
+    plot_loss_curve(
+        train_loss_history, 
+        val_loss_history, 
+        os.path.join(PLOT_SAVE_DIR, "training_loss_curve.png")
     )
-    print("Saved best model to robopilot_cnn_best.pth")
+    
+    if best_state_dict is not None:
+        torch.save(
+            {
+                "model_state_dict": best_state_dict,
+                "input": "RGB images 128x128 normalized /255",
+                "task": "multi-label driving control (2 outputs, sigmoid)", # Mis à jour la tâche
+            },
+            "scripts/model/output/robopilot_cnn_best.pth"
+        )
+        print("Saved best model to robopilot_cnn_best.pth")
+    else:
+        print("No best model was found, skipping save.")
 
 if __name__ == "__main__":
     train()

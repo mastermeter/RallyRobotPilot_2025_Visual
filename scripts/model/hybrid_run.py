@@ -10,7 +10,7 @@ sys.path.append(PARENT_DIR)
 
 from data_collector import DataCollectionUI
 from model.train_tools.RobopilotCNNLSTM import RobopilotCNNLSTM
-from scripts.model.train_tools.old_LR_only.RobopilotCNN import RobopilotCNN
+from model.train_tools.old_LR_only.RobopilotCNN import RobopilotCNN
 from model.train_tools.process import (
     normalize_image_ndarray,
     resize_image_ndarray,
@@ -18,7 +18,7 @@ from model.train_tools.process import (
 )
 
 MODEL_LSTM_PATH = "scripts/model/output/robopilot_cnn_best_90k_11SEQ.pth"
-MODEL_STEER_PATH = "scripts/model/output/robopilot_cnn_best_LR_90k.pth"
+MODEL_STEER_PATH = "scripts/model/output/robopilot_cnn_best.pth"
 SEQ_LEN = 11
 
 

@@ -6,8 +6,8 @@ import sys, os
 from torch.utils.data import DataLoader, random_split
 
 
-PRETRAINED_MODEL_PATH = "scripts/model/output/robopilot_cnn_best_LR_90k.pth"
-FILES_PATH = "record_signs_*.npz"
+PRETRAINED_MODEL_PATH = "scripts/model/output/robopilot_cnn_best.pth"
+FILES_PATH = "records_signs/record_signs_*.npz"
 SAVE_PATH = "scripts/model/output/robopilot_cnn_finetuned_signs.pth"
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
