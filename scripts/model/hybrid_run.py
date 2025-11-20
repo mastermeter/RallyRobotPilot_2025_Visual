@@ -18,7 +18,7 @@ from model.train_tools.process import (
 )
 
 MODEL_LSTM_PATH = "scripts/model/output/robopilot_cnn_best_90k_11SEQ.pth"
-MODEL_STEER_PATH = "scripts/model/output/robopilot_cnn_best.pth"
+MODEL_STEER_PATH = "scripts/model/output/robopilot_cnn_LR_GOAT.pth"
 SEQ_LEN = 11
 
 
