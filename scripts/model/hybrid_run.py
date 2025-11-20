@@ -10,63 +10,69 @@ sys.path.append(PARENT_DIR)
 
 from data_collector import DataCollectionUI
 from model.train_tools.RobopilotCNNLSTM import RobopilotCNNLSTM
+from scripts.model.train_tools.old_LR_only.RobopilotCNN import RobopilotCNN
 from model.train_tools.process import (
     normalize_image_ndarray,
     resize_image_ndarray,
     crop_image_ndarray,
 )
 
-MODEL_PATH = "scripts/model/output/robopilot_cnn_best_90k_11SEQ.pth"
+MODEL_LSTM_PATH = "scripts/model/output/robopilot_cnn_best_90k_11SEQ.pth"
+MODEL_STEER_PATH = "scripts/model/output/robopilot_cnn_best_LR_90k.pth"
 SEQ_LEN = 11
 
 
-def preprocess_for_model(image_array):
-    resized   = resize_image_ndarray(image_array, target_size=(128, 128))
+def preprocess_frame_for_buffer(image_array):
+    resized = resize_image_ndarray(image_array, target_size=(128, 128))
     normalized = normalize_image_ndarray(resized)
-    return normalized  # (H, W, 3), float32
+    return normalized
 
 
-class NNMsgProcessor:
-    TH_LR_ON, TH_LR_OFF = 0.3, 0.2 #0.50
+def preprocess_frame_for_steer(image_array_norm):
+    chw = np.transpose(image_array_norm, (2, 0, 1))
+    return torch.tensor(chw, dtype=torch.float32).unsqueeze(0)
+
+
+class HybridNNProcessor:
     TH_F_ON, TH_F_OFF = 0.65, 0.35
-
     COAST_TH = 0.80
     COAST_MS = 140
-
     STARTUP_MS = 800
     STARTUP_MIN_PF = TH_F_ON
 
-    def __init__(self, model_path=MODEL_PATH, device=None, debug=False):
+    TH_LR_ON, TH_LR_OFF = 0.3, 0.2
+    
+    def __init__(self, model_lstm_path, model_steer_path, device=None, debug=False):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         self.debug = debug
         print(f"[RUN] Using device: {self.device}")
 
-        self.model = RobopilotCNNLSTM(
-            in_channels=3,
-            seq_len=SEQ_LEN,
-            cnn_feature_dim=256,
-            lstm_hidden_dim=128,
-            lstm_num_layers=1,
-            output_size=3,
-            dropout_rate=0.3,
+        self.model_forward = RobopilotCNNLSTM(
+            in_channels=3, seq_len=SEQ_LEN, cnn_feature_dim=256,
+            lstm_hidden_dim=128, lstm_num_layers=1, output_size=3, dropout_rate=0.3,
         ).to(self.device)
-        self.model.eval()
+        self.model_forward.eval()
+        ckpt_fwd = torch.load(model_lstm_path, map_location=self.device)
+        self.model_forward.load_state_dict(ckpt_fwd["model_state_dict"])
+        print("[RUN] CNN+LSTM (Forward) model weights loaded.")
 
-        ckpt = torch.load(model_path, map_location=self.device)
-        self.model.load_state_dict(ckpt["model_state_dict"])
-        print("[RUN] CNN+LSTM model weights loaded.")
+        self.model_steer = RobopilotCNN(output_size=2).to(self.device)
+        self.model_steer.eval()
+        ckpt_steer = torch.load(model_steer_path, map_location=self.device)
+        self.model_steer.load_state_dict(ckpt_steer["model_state_dict"])
+        print("[RUN] CNN (Steer) model weights loaded.")
 
         self.state = {"forward": False, "back": False, "left": False, "right": False}
-
+        
         self.hold_left = False
         self.hold_right = False
+        
         self.hold_forward = False
-
         self.coast_until = 0.0
         self.t0_ms = None
-
+        
         self.buffer = deque(maxlen=SEQ_LEN)
 
     def _send(self, ui, key, want):
@@ -75,25 +81,20 @@ class NNMsgProcessor:
             self.state[key] = want
             ui.onCarControlled(key, want)
 
-    def _hyst_lr(self, p_left, p_right):
-        print(f"p_l={p_left:.2f} p_r={p_right:.2f}")
-
+    def _hyst_steer(self, p_left, p_right):
         if self.hold_left:
-            self.hold_left = p_left >= self.TH_LR_OFF
+            self.hold_left = (p_left >= self.TH_LR_OFF) and (p_right < self.TH_LR_ON or p_left >= p_right)
         else:
             self.hold_left = (p_left >= self.TH_LR_ON) and (p_left >= p_right)
-
         if self.hold_right:
-            self.hold_right = p_right >= self.TH_LR_OFF
+            self.hold_right = (p_right >= self.TH_LR_OFF) and (p_left < self.TH_LR_ON or p_right >= p_left)
         else:
             self.hold_right = (p_right >= self.TH_LR_ON) and (p_right >= p_left)
-
         if self.hold_left and self.hold_right:
-            if p_left > p_right:
+            if p_left > p_right: 
                 self.hold_right = False
-            else:
-                self.hold_left = False
-
+            else:                
+                self.hold_left  = False
         return self.hold_left, self.hold_right
 
     def _hyst_forward(self, p_f):
@@ -103,7 +104,7 @@ class NNMsgProcessor:
             self.hold_forward = (p_f >= self.TH_F_ON)
         return self.hold_forward
 
-    def _infer_probs(self):
+    def _infer_forward_prob(self):
         if len(self.buffer) == 0:
             return None
 
@@ -114,15 +115,22 @@ class NNMsgProcessor:
         else:
             frames = list(self.buffer)[-SEQ_LEN:]
 
-        seq = np.stack(frames, axis=0)  # (T, H, W, 3)
-        seq = np.transpose(seq, (0, 3, 1, 2))  # (T, 3, H, W)
-        x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(self.device)  # (1, T, C, H, W)
+        seq = np.stack(frames, axis=0)
+        seq = np.transpose(seq, (0, 3, 1, 2))
+        x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            logits = self.model(x)[0]                  # (3,)
-            probs = torch.sigmoid(logits).cpu().numpy() # [0,1]
+            logits = self.model_forward(x)[0]
+            probs = torch.sigmoid(logits).cpu().numpy()
 
-        return probs.tolist()  # [p_f, p_l, p_r]
+        return probs.tolist()[0] 
+
+    def _infer_steer_probs(self, frame_h_w_c):
+        x = preprocess_frame_for_steer(frame_h_w_c).to(self.device)
+        with torch.no_grad():
+            logits = self.model_steer(x)[0]
+            p_left, p_right = torch.sigmoid(logits).cpu().numpy().tolist()
+        return p_left, p_right
 
     def process_message(self, message, ui: DataCollectionUI):
         if self.t0_ms is None:
@@ -130,21 +138,22 @@ class NNMsgProcessor:
 
         if message.image is None:
             return
-        img_norm = preprocess_for_model(message.image)   # (H, W, 3), float32
-        self.buffer.append(img_norm)
+            
+        img_norm = preprocess_frame_for_buffer(message.image)
+        self.buffer.append(img_norm) 
 
-        probs = self._infer_probs()
-        if probs is None:
+        p_f = self._infer_forward_prob()
+        p_l, p_r = self._infer_steer_probs(img_norm)
+
+        if p_f is None:
             return
 
-        p_f, p_l, p_r = probs
-
-        hold_l, hold_r = self._hyst_lr(p_l, p_r)
-        turn_intensity = max(p_l, p_r)
-
+        hold_l, hold_r = self._hyst_steer(p_l, p_r)
         want_f = self._hyst_forward(p_f)
 
         now_ms = time.time() * 1000.0
+        turn_intensity = max(p_l, p_r) 
+
         if (now_ms - self.t0_ms) < self.STARTUP_MS and not want_f and p_f < self.STARTUP_MIN_PF:
             want_f = True
             self.hold_forward = True
@@ -156,14 +165,14 @@ class NNMsgProcessor:
         if now_ms < self.coast_until:
             want_f = False
 
-        self._send(ui, "left",  hold_l)
-        self._send(ui, "right", hold_r)
+        self._send(ui, "left",   hold_l)
+        self._send(ui, "right",  hold_r)
         self._send(ui, "forward", want_f)
-        self._send(ui, "back", False)
+        self._send(ui, "back",   False)
 
         if self.debug:
             print(
-                f"P(f,l,r)=({p_f:.2f},{p_l:.2f},{p_r:.2f})  "
+                f"P(f)={p_f:.2f} P(l,r)=({p_l:.2f},{p_r:.2f})  "
                 f"LR=({hold_l},{hold_r})  F={want_f}"
             )
 
@@ -175,7 +184,13 @@ def except_hook(cls, exception, traceback):
 if __name__ == "__main__":
     sys.excepthook = except_hook
     app = QtWidgets.QApplication(sys.argv)
-    brain = NNMsgProcessor(MODEL_PATH, debug=False)
+    
+    brain = HybridNNProcessor(
+        MODEL_LSTM_PATH, 
+        MODEL_STEER_PATH, 
+        debug=False
+    )
+    
     win = DataCollectionUI(brain.process_message)
     win.show()
     app.exec()

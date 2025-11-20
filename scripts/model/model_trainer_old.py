@@ -1,33 +1,23 @@
 import torch
 import torch.optim as optim
 import torch.nn as nn
-import sys, os
 
 from torch.utils.data import DataLoader, random_split
-
-
-PRETRAINED_MODEL_PATH = "scripts/model/output/robopilot_cnn_best_LR_90k.pth"
-FILES_PATH = "record_signs_*.npz"
-SAVE_PATH = "scripts/model/output/robopilot_cnn_finetuned_signs.pth"
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.dirname(CURRENT_DIR)
-MODEL_DIR = os.path.join(PARENT_DIR, "model")
-sys.path.append(MODEL_DIR)
-
 from train_tools.old_LR_only.process import process_datas
 from train_tools.old_LR_only.RoboDataset import RoboDataset
 from train_tools.old_LR_only.RobopilotCNN import RobopilotCNN
 
-BATCH_SIZE = 32 
-EPOCHS = 25    
+BATCH_SIZE = 64
+EPOCHS = 50
 VAL_SPLIT = 0.2
+FILES_PATH = "record_*.npz"
+
 DELTA_FRAMES = 1
 
-EARLY_STOPPING_PATIENCE = 5
+EARLY_STOPPING_PATIENCE = 10  
 EARLY_STOPPING_MIN_DELTA = 1e-4
 
-LEARNING_RATE = 0.0001 
+LEARNING_RATE = 0.001
 WEIGHT_DECAY = 1e-4
 STEP_SIZE = 10
 GAMMA = 0.95
@@ -47,8 +37,7 @@ def prepare_datas():
     val_size = int(len(dataset) * VAL_SPLIT)
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-    
-    print(f"Fine-tuning data loaded: {len(dataset)} samples.")
+
     return train_dataset, val_dataset
 
 def train():
@@ -61,14 +50,6 @@ def train():
     val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False)
 
     model = RobopilotCNN(output_size=2).to(device)
-    
-    try:
-        ckpt = torch.load(PRETRAINED_MODEL_PATH, map_location=device)
-        model.load_state_dict(ckpt["model_state_dict"])
-        print(f"Successfully loaded pre-trained model from {PRETRAINED_MODEL_PATH}")
-    except Exception as e:
-        print(f"Error loading pre-trained model: {e}")
-        print("Starting training from scratch instead.")
 
     criterion = nn.BCEWithLogitsLoss()
 
@@ -79,9 +60,6 @@ def train():
     best_val_loss = float("inf")
     best_state_dict = None
     patience_counter = 0
-    
-    print("--- Starting Fine-Tuning ---")
-    
     for epoch in range(EPOCHS):
         model.train()
         running_train_loss = 0.0
@@ -131,7 +109,7 @@ def train():
             best_val_loss = avg_val_loss
             best_state_dict = model.state_dict()
             patience_counter = 0
-            print(f"   -> New best fine-tuned model (val_loss={best_val_loss:.4f})")
+            print(f"   -> New best model (val_loss={best_val_loss:.4f})")
         else:
             patience_counter += 1
             if patience_counter >= EARLY_STOPPING_PATIENCE:
@@ -142,11 +120,11 @@ def train():
         {
             "model_state_dict": best_state_dict,
             "input": "RGB images 128x128 normalized /255",
-            "task": "multi-label driving control (2 outputs, finetuned on signs)",
+            "task": "multi-label driving control (4 outputs, sigmoid)",
         },
-        SAVE_PATH
+        "scripts/model/output/robopilot_cnn_best.pth"
     )
-    print(f"Saved fine-tuned model to {SAVE_PATH}")
+    print("Saved best model to robopilot_cnn_best.pth")
 
 if __name__ == "__main__":
     train()

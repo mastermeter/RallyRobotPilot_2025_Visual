@@ -57,16 +57,13 @@ class RobopilotCNNLSTM(nn.Module):
         x : (B, T, C, H, W)
         """
         B, T, C, H, W = x.shape
-        # fusionner B et T -> (B*T, C, H, W)
         x = x.reshape(B * T, C, H, W)
         x = self.conv(x)
         x = self.cnn_head(x)          # (B*T, F)
 
-        # remettre en séquence -> (B, T, F)
         F = x.shape[-1]
         x = x.reshape(B, T, F)
 
-        # LSTM
         lstm_out, _ = self.lstm(x)    # (B, T, H)
         last_h = lstm_out[:, -1, :]   # (B, H)
 
